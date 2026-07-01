@@ -1,0 +1,38 @@
+NebulaForge is an open-source toolkit designed to simplify project initialization and repository management. It provides customizable templates, clean folder structures, automated configuration, and extensible modules for developers who want to build projects faster with consistent standards.
+
+Features:
+- Modular architecture
+- Fast project scaffolding
+- Custom template support
+- Git automation helpers
+- Cross-platform compatibility
+- Clean and maintainable codebase
+automation
+developer-tools
+project-generator
+cli
+templates
+github
+repository
+workflow
+typescript
+open-source
+# NebulaForge
+
+⚡ Build projects faster with modular templates and automation.
+
+## Features
+
+- 🚀 One-command project initialization
+- 📂 Organized folder structure
+- 🔧 Customizable templates
+- 🌍 Cross-platform support
+- 🛠 Git workflow automation
+
+## Installation
+
+```bash
+git clone https://github.com/yourusername/NebulaForge.git
+cd NebulaForge
+npm install
+npm start
