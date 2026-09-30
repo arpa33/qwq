@@ -1,0 +1,521 @@
+PROJECT: Averin
+TYPE: Professional GitHub Repository Intelligence CLI
+LANGUAGE: TypeScript
+RUNTIME: Node.js 20+
+
+==================================================
+FILE: package.json
+==================================================
+
+{
+  "name": "averin",
+  "version": "1.0.0",
+  "description": "A professional repository intelligence CLI for analyzing GitHub projects.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "averin": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.2",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@typescript-eslint/eslint-plugin": "^8.24.1",
+    "@typescript-eslint/parser": "^8.24.1",
+    "eslint": "^9.21.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}
+
+==================================================
+FILE: tsconfig.json
+==================================================
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"]
+}
+
+==================================================
+FILE: src/types.ts
+==================================================
+
+export interface RepositoryStats {
+  name: string;
+  fullName: string;
+  description: string | null;
+  stars: number;
+  forks: number;
+  openIssues: number;
+  watchers: number;
+  sizeKb: number;
+  language: string | null;
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+  pushedAt: string | null;
+  archived: boolean;
+  license: string | null;
+}
+
+export interface AnalysisResult {
+  repository: RepositoryStats;
+  healthScore: number;
+  indicators: {
+    activity: number;
+    maintenance: number;
+    community: number;
+    documentation: number;
+  };
+  recommendations: string[];
+}
+
+==================================================
+FILE: src/github.ts
+==================================================
+
+import { Octokit } from "@octokit/rest";
+import type { RepositoryStats } from "./types.js";
+
+export class GitHubClient {
+  private readonly client: Octokit;
+
+  constructor(token?: string) {
+    this.client = new Octokit({
+      auth: token || undefined
+    });
+  }
+
+  async getRepository(
+    owner: string,
+    repo: string
+  ): Promise<RepositoryStats> {
+    const { data } = await this.client.repos.get({
+      owner,
+      repo
+    });
+
+    return {
+      name: data.name,
+      fullName: data.full_name,
+      description: data.description,
+      stars: data.stargazers_count,
+      forks: data.forks_count,
+      openIssues: data.open_issues_count,
+      watchers: data.watchers_count,
+      sizeKb: data.size,
+      language: data.language,
+      defaultBranch: data.default_branch,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+      pushedAt: data.pushed_at,
+      archived: data.archived,
+      license: data.license?.spdx_id ?? null
+    };
+  }
+}
+
+==================================================
+FILE: src/analyzer.ts
+==================================================
+
+import type { AnalysisResult, RepositoryStats } from "./types.js";
+
+function clamp(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function analyzeRepository(
+  repository: RepositoryStats
+): AnalysisResult {
+  const now = Date.now();
+
+  const updatedAt = new Date(repository.updatedAt).getTime();
+  const pushedAt = repository.pushedAt
+    ? new Date(repository.pushedAt).getTime()
+    : updatedAt;
+
+  const daysSinceUpdate =
+    (now - updatedAt) / (1000 * 60 * 60 * 24);
+
+  const daysSincePush =
+    (now - pushedAt) / (1000 * 60 * 60 * 24);
+
+  const activity = clamp(
+    daysSincePush <= 7
+      ? 100
+      : daysSincePush <= 30
+        ? 85
+        : daysSincePush <= 90
+          ? 65
+          : daysSincePush <= 180
+            ? 40
+            : 15
+  );
+
+  const maintenance = clamp(
+    daysSinceUpdate <= 30
+      ? 100
+      : daysSinceUpdate <= 90
+        ? 80
+        : daysSinceUpdate <= 180
+          ? 55
+          : 25
+  );
+
+  const community = clamp(
+    Math.min(
+      100,
+      Math.log10(repository.stars + 1) * 22 +
+        Math.log10(repository.forks + 1) * 18
+    )
+  );
+
+  let documentation = 30;
+
+  if (repository.description) {
+    documentation += 30;
+  }
+
+  if (repository.license) {
+    documentation += 20;
+  }
+
+  if (repository.language) {
+    documentation += 20;
+  }
+
+  documentation = clamp(documentation);
+
+  const healthScore = clamp(
+    activity * 0.30 +
+      maintenance * 0.30 +
+      community * 0.20 +
+      documentation * 0.20 -
+      (repository.archived ? 30 : 0)
+  );
+
+  const recommendations: string[] = [];
+
+  if (activity < 60) {
+    recommendations.push(
+      "Increase development activity and maintain a consistent commit cadence."
+    );
+  }
+
+  if (maintenance < 60) {
+    recommendations.push(
+      "Review stale issues, dependencies, and repository maintenance workflows."
+    );
+  }
+
+  if (documentation < 60) {
+    recommendations.push(
+      "Improve repository metadata, documentation, and licensing information."
+    );
+  }
+
+  if (community < 50) {
+    recommendations.push(
+      "Improve discoverability and contribution workflows for the community."
+    );
+  }
+
+  if (repository.archived) {
+    recommendations.push(
+      "Repository is archived and should not be treated as actively maintained."
+    );
+  }
+
+  if (recommendations.length === 0) {
+    recommendations.push(
+      "Repository indicators are healthy. Continue monitoring activity and maintenance."
+    );
+  }
+
+  return {
+    repository,
+    healthScore,
+    indicators: {
+      activity,
+      maintenance,
+      community,
+      documentation
+    },
+    recommendations
+  };
+}
+
+==================================================
+FILE: src/report.ts
+==================================================
+
+import type { AnalysisResult } from "./types.js";
+
+export function createMarkdownReport(
+  result: AnalysisResult
+): string {
+  const { repository, indicators } = result;
+
+  return `# Repository Intelligence Report
+
+## ${repository.fullName}
+
+${repository.description ?? "No repository description provided."}
+
+### Overview
+
+| Metric | Value |
+|---|---:|
+| Health Score | ${result.healthScore}/100 |
+| Stars | ${repository.stars} |
+| Forks | ${repository.forks} |
+| Open Issues | ${repository.openIssues} |
+| Watchers | ${repository.watchers} |
+| Size | ${repository.sizeKb} KB |
+| Language | ${repository.language ?? "Unknown"} |
+| License | ${repository.license ?? "Not specified"} |
+| Default Branch | ${repository.defaultBranch} |
+| Archived | ${repository.archived ? "Yes" : "No"} |
+
+### Indicators
+
+- Activity: ${indicators.activity}/100
+- Maintenance: ${indicators.maintenance}/100
+- Community: ${indicators.community}/100
+- Documentation: ${indicators.documentation}/100
+
+### Recommendations
+
+${result.recommendations.map((item) => `- ${item}`).join("\n")}
+
+---
+
+Generated by Averin.
+`;
+}
+
+export function createJsonReport(
+  result: AnalysisResult
+): string {
+  return JSON.stringify(result, null, 2);
+}
+
+==================================================
+FILE: src/index.ts
+==================================================
+
+#!/usr/bin/env node
+
+import { Command } from "commander";
+import chalk from "chalk";
+import ora from "ora";
+import { GitHubClient } from "./github.js";
+import { analyzeRepository } from "./analyzer.js";
+import {
+  createJsonReport,
+  createMarkdownReport
+} from "./report.js";
+
+const program = new Command();
+
+program
+  .name("averin")
+  .description(
+    "Repository intelligence and GitHub project analysis CLI"
+  )
+  .version("1.0.0");
+
+program
+  .command("analyze")
+  .description("Analyze a GitHub repository")
+  .argument("<repository>", "Repository in owner/name format")
+  .option("--json", "Output JSON")
+  .option("--markdown", "Output Markdown")
+  .option(
+    "--token <token>",
+    "GitHub personal access token"
+  )
+  .action(
+    async (
+      repository: string,
+      options: {
+        json?: boolean;
+        markdown?: boolean;
+        token?: string;
+      }
+    ) => {
+      const parts = repository.split("/");
+
+      if (parts.length !== 2) {
+        console.error(
+          chalk.red(
+            "Invalid repository format. Use owner/name."
+          )
+        );
+
+        process.exitCode = 1;
+        return;
+      }
+
+      const [owner, repo] = parts;
+
+      const spinner = ora(
+        `Analyzing ${repository}...`
+      ).start();
+
+      try {
+        const client = new GitHubClient(
+          options.token ?? process.env.GITHUB_TOKEN
+        );
+
+        const data = await client.getRepository(
+          owner,
+          repo
+        );
+
+        const result = analyzeRepository(data);
+
+        spinner.stop();
+
+        if (options.json) {
+          console.log(createJsonReport(result));
+          return;
+        }
+
+        if (options.markdown) {
+          console.log(createMarkdownReport(result));
+          return;
+        }
+
+        console.log();
+        console.log(
+          chalk.bold(`Repository: ${result.repository.fullName}`)
+        );
+
+        console.log(
+          `Health Score: ${chalk.bold(
+            `${result.healthScore}/100`
+          )}`
+        );
+
+        console.log(
+          `Stars: ${result.repository.stars}`
+        );
+
+        console.log(
+          `Forks: ${result.repository.forks}`
+        );
+
+        console.log(
+          `Open Issues: ${result.repository.openIssues}`
+        );
+
+        console.log();
+        console.log(chalk.bold("Indicators"));
+
+        console.log(
+          `  Activity       ${result.indicators.activity}/100`
+        );
+
+        console.log(
+          `  Maintenance    ${result.indicators.maintenance}/100`
+        );
+
+        console.log(
+          `  Community      ${result.indicators.community}/100`
+        );
+
+        console.log(
+          `  Documentation ${result.indicators.documentation}/100`
+        );
+
+        console.log();
+        console.log(chalk.bold("Recommendations"));
+
+        for (const recommendation of result.recommendations) {
+          console.log(`  • ${recommendation}`);
+        }
+
+        console.log();
+      } catch (error) {
+        spinner.fail("Repository analysis failed.");
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown error";
+
+        console.error(chalk.red(message));
+
+        process.exitCode = 1;
+      }
+    }
+  );
+
+program.parseAsync(process.argv);
+
+==================================================
+FILE: README.md
+==================================================
+
+# Averin
+
+A professional GitHub repository intelligence CLI.
+
+Averin analyzes public GitHub repositories and produces a structured
+health report based on repository activity, maintenance, community
+signals, documentation, and project metadata.
+
+## Features
+
+- GitHub repository analysis
+- Repository health score
+- Activity analysis
+- Maintenance analysis
+- Community analysis
+- Documentation analysis
+- Actionable recommendations
+- JSON output
+- Markdown reports
+- GitHub token support
+- TypeScript architecture
+- CLI-first workflow
+
+## Installation
+
+```bash
+git clone https://github.com/YOUR_USERNAME/averin.git
+
+cd averin
+
+npm install
+
+npm run build
